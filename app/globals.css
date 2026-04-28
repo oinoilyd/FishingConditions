@@ -1,5 +1,14 @@
 @import "tailwindcss";
 
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.38s cubic-bezier(0.32, 0.72, 0, 1);
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
