@@ -137,7 +137,7 @@ export default function Home() {
           <div>
             <SearchBar onLocationSelect={handleLocationSelect} />
             <p className="text-white/30 text-xs mt-3 text-center">
-              Try "Lake Michigan Chicago" or "Elk River Montana"
+              Try &quot;Lake Michigan Chicago&quot; or &quot;Elk River Montana&quot;
             </p>
           </div>
         ) : (
