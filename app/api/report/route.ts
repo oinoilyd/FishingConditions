@@ -168,7 +168,7 @@ Return ONLY a valid JSON object with exactly these fields, no extra text:
   "baitAlternatives": ["3 to 4 additional bait or lure options as short strings"],
   "retrievalStyle": "Concise answer, e.g. 'Slow roll with occasional pause'",
   "structureTypes": "Concise answer, e.g. 'Rocky points, weed edges, submerged timber'",
-  "riskFlags": ["short warning phrases only, empty array if none"]
+  "riskFlags": ["short warning phrases only, empty array if none — if the location name suggests a small or urban water body where ${speciesLabel} are realistically absent (e.g. Pike/Muskie in a small pond), add a flag like 'Pike/Muskie unlikely here — water body too small'"]
 }`
       }]
     })

@@ -40,10 +40,19 @@ export default function Map({ onLocationSelect }: MapProps) {
 
       try {
         const res = await fetch(
-          `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}`
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${lng},${lat}.json?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&types=poi,place,locality,region,district`
         )
         const data = await res.json()
-        const name = data.features?.[0]?.place_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+        const features = data.features || []
+        const waterPattern = /\b(lake|river|creek|bay|pond|reservoir|ocean|sea|gulf|sound|strait|stream|brook|channel|harbor|harbour|inlet|cove|marsh|slough)\b/i
+        const waterFeature = features.find((f: { text?: string }) => waterPattern.test(f.text || ''))
+        let name: string
+        if (waterFeature) {
+          const region = features.find((f: { place_type?: string[] }) => f.place_type?.includes('region'))
+          name = region ? `${waterFeature.text}, ${region.text}` : waterFeature.text
+        } else {
+          name = features[0]?.place_name || `${lat.toFixed(4)}, ${lng.toFixed(4)}`
+        }
         callbackRef.current(lat, lng, name)
       } catch {
         callbackRef.current(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`)
