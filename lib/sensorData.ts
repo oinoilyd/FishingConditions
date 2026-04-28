@@ -75,7 +75,7 @@ async function fetchNDBC(lat: number, lng: number): Promise<SensorReading | null
     while ((match = stationRe.exec(xml)) !== null) {
       const [, id, slat, slng, name] = match
       const dist = haversine(lat, lng, parseFloat(slat), parseFloat(slng))
-      if (dist < 300 && (!best || dist < best.dist)) {
+      if (!best || dist < best.dist) {
         best = { id, name, dist }
       }
     }
@@ -252,7 +252,7 @@ async function fetchCOOPS(lat: number, lng: number): Promise<SensorReading | nul
     let best: { id: string; name: string; dist: number } | null = null
     for (const s of stationMap.values()) {
       const dist = haversine(lat, lng, s.lat, s.lng)
-      if (dist < 200 && (!best || dist < best.dist)) {
+      if (!best || dist < best.dist) {
         best = { id: s.id, name: s.name, dist }
       }
     }
@@ -323,7 +323,7 @@ async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null
       const dist = haversine(lat, lng, fLat, fLng)
       const lid = f.attributes?.gaugeID || f.attributes?.lid || f.attributes?.STAID
       const name = f.attributes?.name || f.attributes?.STANAME || lid
-      if (dist < 100 && lid && (!best || dist < best.dist)) {
+      if (lid && (!best || dist < best.dist)) {
         best = { lid, name, dist }
       }
     }

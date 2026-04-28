@@ -299,15 +299,29 @@ export default function ReportPanel({ report, loading, onClose, onSpeciesChange 
               <DayTimeline timeline={report.dayTimeline} />
             )}
 
-            {/* Risk Flags */}
-            {report.riskFlags?.length > 0 && (
-              <div className="mx-5 mb-5 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
-                <p className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-2">⚠️ Warnings</p>
-                {report.riskFlags.map((flag, i) => (
-                  <p key={i} className="text-red-300/80 text-sm">{flag}</p>
-                ))}
-              </div>
-            )}
+            {/* Risk Flags / Considerations */}
+            {report.riskFlags?.length > 0 && (() => {
+              const emergencyPattern = /\b(warning|advisory|flood|storm|tornado|hurricane|tsunami|evacuation|emergency|danger)\b/i
+              const isWarning = report.riskFlags.some(f => emergencyPattern.test(f))
+              return (
+                <div className={`mx-5 mb-5 rounded-xl p-3 border ${
+                  isWarning
+                    ? 'bg-red-500/10 border-red-500/20'
+                    : 'bg-amber-500/10 border-amber-500/20'
+                }`}>
+                  <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${
+                    isWarning ? 'text-red-400' : 'text-amber-400'
+                  }`}>
+                    {isWarning ? '⚠️ Warnings' : '💡 Considerations'}
+                  </p>
+                  {report.riskFlags.map((flag, i) => (
+                    <p key={i} className={`text-sm ${isWarning ? 'text-red-300/80' : 'text-amber-200/70'}`}>
+                      {flag}
+                    </p>
+                  ))}
+                </div>
+              )
+            })()}
 
             {/* Report Body */}
             <div className="px-5 pb-10">
