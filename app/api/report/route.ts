@@ -74,6 +74,52 @@ function scoreConditions(current: Record<string, number>, pressureTrend: number)
   return { scores, total, overallScore }
 }
 
+function classifyWaterBody(locationName: string): { type: string; context: string } {
+  const name = locationName.toLowerCase()
+
+  const isGreatLake = /\b(lake michigan|lake superior|lake huron|lake erie|lake ontario)\b/.test(name)
+  const isSaltwater = /\b(ocean|sea|gulf|sound|strait|bay|harbor|harbour|inlet|cove|estuary|tidal|saltwater|offshore|atlantic|pacific|chesapeake|puget)\b/.test(name)
+  const isLake = /\b(lake|reservoir|impoundment|loch)\b/.test(name)
+  const isLargeRiver = /\b(mississippi|missouri|ohio|columbia|colorado|snake|tennessee|arkansas|rio grande|hudson|delaware|susquehanna|potomac|sacramento|san joaquin)\b/.test(name)
+  const isRiver = /\b(river|creek|stream|brook|run|fork|tributary|rapids|falls|rio|bayou|slough)\b/.test(name)
+  const isPond = /\b(pond|pool|retention|urban|park|farm|private)\b/.test(name)
+
+  if (isGreatLake) return {
+    type: 'Great Lake',
+    context: `WATER BODY: Great Lake (${locationName}). Treat this as open, cold, deep water — think like a sea. Depths can exceed 900ft. Focus on nearshore structure (shoals, rocky points, piers, harbor mouths) in shallower zones, and offshore trolling in open water. Realistic species: Salmon, Trout (lake/brown/rainbow/steelhead), Walleye, Smallmouth Bass, Yellow Perch, Pike in harbors/river mouths. Largemouth Bass and Panfish are limited to protected harbor/bay areas only. Pike/Muskie possible near river mouths and shallow bays. Wave action, thermoclines, and boat traffic are significant factors. Depth ranges and structure must reflect this massive scale.`,
+  }
+
+  if (isSaltwater) return {
+    type: 'Saltwater / Coastal',
+    context: `WATER BODY: Saltwater or coastal environment. Adjust all recommendations for saltwater: tides, salinity, and currents are primary drivers of fish movement. Freshwater species (bass, walleye, panfish, pike) are NOT present. Realistic species include: Striped Bass, Flounder, Redfish, Snook, Tarpon, Bluefish, Weakfish, Sheepshead, Drum, and local saltwater species. If the user selected a freshwater species, flag it as not applicable and recommend appropriate saltwater alternatives.`,
+  }
+
+  if (isPond) return {
+    type: 'Small Pond',
+    context: `WATER BODY: Small pond or urban water body. Maximum depth likely 3-15ft. Species realistically present: Largemouth Bass, Panfish (Bluegill, Crappie), Catfish, and possibly Carp. Pike/Muskie, Walleye, Salmon, Trout, and Smallmouth Bass are NOT realistic in a small pond — flag this clearly if selected. Structure is limited: focus on shoreline cover, dock edges, lily pads, any submerged timber or inlet. Depth range should reflect the shallow nature (2-8ft typical). Tactics should be close-quarters and finesse-oriented.`,
+  }
+
+  if (isLargeRiver) return {
+    type: 'Large River',
+    context: `WATER BODY: Large river system. Current is the dominant factor — fish relate to current breaks, eddies, wing dams, outside bends, deep holes, and slack water behind structure. Realistic species vary by region but typically include: Catfish, Walleye, Smallmouth Bass, Largemouth Bass (backwater areas), Pike, Panfish, Carp, and migratory species (Salmon/Steelhead on certain rivers). Depth recommendations should reference current seams and holes. Structure = wing dams, rock piles, bridge pilings, outside bends, submerged islands. Retrieval style must account for current direction.`,
+  }
+
+  if (isRiver) return {
+    type: 'River / Stream',
+    context: `WATER BODY: River or stream. Current is the primary fish-positioning factor. Fish hold in eddies, behind boulders, in pools below riffles, along cut banks, and at tributary mouths. Realistic species: Trout (in cold, clear streams), Smallmouth Bass (rocky rivers), Largemouth Bass (warmer slower rivers), Panfish, Pike, Walleye in larger rivers. Salmon in appropriate migratory rivers. Depth ranges are typically shallow (1-10ft in riffles/runs, deeper in pools). Bait and presentation must work with or across current. Flag species that don't match river type (e.g., Muskie in a small trout stream).`,
+  }
+
+  if (isLake) return {
+    type: 'Lake / Reservoir',
+    context: `WATER BODY: Lake or reservoir. Tailor recommendations to a standard inland lake or reservoir. Consider depth variation — most productive zones are near structure: points, drop-offs, weed edges, submerged timber, dam faces (reservoirs). All standard freshwater species are plausible depending on region: Bass, Walleye, Pike/Muskie, Panfish, Catfish, Trout (if cold/deep enough). Use the specific lake name and region to infer likely species — a southern reservoir won't have Muskie or Salmon; a deep northern lake won't hold tropical species. Depth recommendations should reflect typical structure fishing (5-25ft range is common).`,
+  }
+
+  return {
+    type: 'Unknown water body',
+    context: `WATER BODY: Type unclear from location name. Use the full location name, coordinates, and your knowledge to infer the water body type (lake, river, ocean, pond, etc.) and adjust ALL recommendations accordingly — species availability, depth, structure, and tactics must reflect what is realistic for the actual water. Do not give generic advice; make your best inference about the water type.`,
+  }
+}
+
 async function fetchWaterTemp(lat: number, lng: number): Promise<string | null> {
   try {
     const res = await fetch(
@@ -131,6 +177,7 @@ export async function POST(req: NextRequest) {
     const waterTempLine = waterTemp ? `Water Temperature: ${waterTemp}` : 'Water Temperature: Not available for this location (use air temp and season to estimate)'
 
     const speciesContext = getSpeciesContext(species)
+    const waterBody = classifyWaterBody(locationName)
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
@@ -141,6 +188,7 @@ export async function POST(req: NextRequest) {
 
 ${speciesContext}
 
+${waterBody.context}
 
 Location: ${locationName}
 Current Time: ${localTime} on ${localDate}
