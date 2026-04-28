@@ -4,6 +4,8 @@ import dynamic from 'next/dynamic'
 import SearchBar from '@/components/SearchBar'
 import ReportPanel from '@/components/ReportPanel'
 import LoadingReport from '@/components/LoadingReport'
+import HistoryPanel from '@/components/HistoryPanel'
+import { addToHistory, type HistoryEntry } from '@/lib/history'
 
 const Map = dynamic(() => import('@/components/Map'), { ssr: false })
 
@@ -33,10 +35,11 @@ interface CacheEntry {
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'search' | 'map'>('map')
   const [location, setLocation] = useState<Location | null>(null)
-  const [species, setSpecies] = useState('general')
+  const [species, setSpecies] = useState('largemouth-bass')
   const [loading, setLoading] = useState(false)
   const [report, setReport] = useState(null)
   const [error, setError] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
   const cacheRef = useRef<Record<string, CacheEntry>>({})
 
   const handleLocationSelect = useCallback((lat: number, lng: number, name: string) => {
@@ -45,10 +48,11 @@ export default function Home() {
     setError(null)
   }, [])
 
-  const fetchReport = async (targetSpecies: string) => {
-    if (!location) return
+  const fetchReport = async (targetSpecies: string, loc?: Location) => {
+    const target = loc || location
+    if (!target) return
 
-    const cacheKey = `${location.lat.toFixed(2)},${location.lng.toFixed(2)},${targetSpecies}`
+    const cacheKey = `${target.lat.toFixed(2)},${target.lng.toFixed(2)},${targetSpecies}`
     const cached = cacheRef.current[cacheKey]
     if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
       setReport(cached.report as never)
@@ -63,9 +67,9 @@ export default function Home() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          lat: location.lat,
-          lng: location.lng,
-          locationName: location.name,
+          lat: target.lat,
+          lng: target.lng,
+          locationName: target.name,
           species: targetSpecies,
           localTime: new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
           localDate: new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }),
@@ -75,6 +79,13 @@ export default function Home() {
       if (data.error) throw new Error(data.error)
       cacheRef.current[cacheKey] = { report: data, timestamp: Date.now() }
       setReport(data)
+      addToHistory({
+        lat: target.lat,
+        lng: target.lng,
+        name: target.name,
+        species: targetSpecies,
+        speciesLabel: SPECIES.find(s => s.value === targetSpecies)?.label || targetSpecies,
+      })
     } catch {
       setError('Failed to generate report. Please try again.')
     }
@@ -89,18 +100,37 @@ export default function Home() {
     fetchReport(newSpecies)
   }
 
+  const handleHistorySelect = (entry: HistoryEntry) => {
+    setShowHistory(false)
+    const loc = { lat: entry.lat, lng: entry.lng, name: entry.name }
+    setLocation(loc)
+    setSpecies(entry.species)
+    setReport(null)
+    setError(null)
+    fetchReport(entry.species, loc)
+  }
+
   const selectedSpeciesLabel = SPECIES.find(s => s.value === species)?.label || 'All Species'
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-white flex flex-col">
       {/* Header */}
       <div className="px-5 pt-10 pb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-3xl">🎣</span>
-          <div>
-            <h1 className="text-xl font-bold text-white leading-tight">CastIQ</h1>
-            <p className="text-white/40 text-xs">Hyperlocal fishing intelligence</p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-3xl">🎣</span>
+            <div>
+              <h1 className="text-xl font-bold text-white leading-tight">CastIQ</h1>
+              <p className="text-white/40 text-xs">Hyperlocal fishing intelligence</p>
+            </div>
           </div>
+          <button
+            onClick={() => setShowHistory(true)}
+            className="flex items-center gap-1.5 bg-white/10 hover:bg-white/15 active:scale-95 transition-all px-3 py-2 rounded-xl"
+          >
+            <span className="text-base">🕐</span>
+            <span className="text-white/70 text-xs font-medium">History</span>
+          </button>
         </div>
       </div>
 
@@ -164,7 +194,7 @@ export default function Home() {
           </div>
         </div>
 
-        {location && loading && (
+        {location && loading && !report && (
           <div className="mt-5">
             <LoadingReport />
           </div>
@@ -173,7 +203,7 @@ export default function Home() {
 
       <div className="h-32" />
 
-      {/* Floating bottom bar — appears when location is selected */}
+      {/* Floating bottom bar */}
       {location && !loading && !report && (
         <div className="fixed bottom-0 left-0 right-0 z-40 px-5 pb-8 pt-4 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent">
           <div className="mb-2 bg-white/5 rounded-2xl px-4 py-3 border border-white/10">
@@ -197,6 +227,13 @@ export default function Home() {
           loading={loading}
           onClose={() => { setReport(null); setLoading(false) }}
           onSpeciesChange={handleSpeciesChangeFromPanel}
+        />
+      )}
+
+      {showHistory && (
+        <HistoryPanel
+          onSelect={handleHistorySelect}
+          onClose={() => setShowHistory(false)}
         />
       )}
     </main>
