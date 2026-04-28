@@ -142,12 +142,14 @@ export async function POST(req: NextRequest) {
     const { lat, lng, locationName, species = 'general', localTime, localDate } = await req.json()
     const speciesLabel = SPECIES_LABELS[species] || 'all species'
 
+    const waterBody = classifyWaterBody(locationName)
+
     const [weatherRes, waterTemp, sensorBundle] = await Promise.all([
       fetch(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=surface_pressure&past_hours=3&forecast_hours=1&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
       ),
       fetchWaterTemp(lat, lng),
-      fetchAllSensorData(lat, lng),
+      fetchAllSensorData(lat, lng, waterBody.type),
     ])
 
     const weatherData = await weatherRes.json()
@@ -201,7 +203,6 @@ export async function POST(req: NextRequest) {
       : ''
 
     const speciesContext = getSpeciesContext(species)
-    const waterBody = classifyWaterBody(locationName)
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',

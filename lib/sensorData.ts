@@ -115,12 +115,12 @@ async function fetchNDBC(lat: number, lng: number): Promise<SensorReading | null
 }
 
 // USGS — river flow rate, gauge height, water temp
-async function fetchUSGS(lat: number, lng: number): Promise<SensorReading | null> {
+async function fetchUSGS(lat: number, lng: number, siteType: 'ST' | 'LK' = 'ST'): Promise<SensorReading | null> {
   try {
     const pad = 0.75
     const bbox = `${(lng - pad).toFixed(3)},${(lat - pad).toFixed(3)},${(lng + pad).toFixed(3)},${(lat + pad).toFixed(3)}`
     const res = await fetch(
-      `https://waterservices.usgs.gov/nwis/iv/?format=json&bBox=${bbox}&parameterCd=00010,00060,00065&period=PT2H&siteType=ST&siteStatus=active`,
+      `https://waterservices.usgs.gov/nwis/iv/?format=json&bBox=${bbox}&parameterCd=00010,00060,00065&period=PT2H&siteType=${siteType}&siteStatus=active`,
       { next: { revalidate: 1800 } }
     )
     const data = await res.json()
@@ -323,20 +323,44 @@ async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null
   }
 }
 
-export async function fetchAllSensorData(lat: number, lng: number): Promise<SensorBundle> {
-  const [ndbc, usgs, coops, nwps] = await Promise.allSettled([
-    fetchNDBC(lat, lng),
-    fetchUSGS(lat, lng),
-    fetchCOOPS(lat, lng),
-    fetchNWPS(lat, lng),
-  ])
+export async function fetchAllSensorData(lat: number, lng: number, waterBodyType = 'Unknown water body'): Promise<SensorBundle> {
+  const type = waterBodyType.toLowerCase()
+  const isGreatLake = type.includes('great lake')
+  const isLake = type.includes('lake') || type.includes('reservoir')
+  const isRiver = type.includes('river') || type.includes('stream')
+  const isSaltwater = type.includes('saltwater') || type.includes('coastal')
+  const isPond = type.includes('pond')
 
-  const readings = [
-    ndbc.status === 'fulfilled' ? ndbc.value : null,
-    usgs.status === 'fulfilled' ? usgs.value : null,
-    coops.status === 'fulfilled' ? coops.value : null,
-    nwps.status === 'fulfilled' ? nwps.value : null,
-  ].filter((r): r is SensorReading => r !== null)
+  // Route the right sources for each water body type:
+  // Great Lakes  → NDBC (buoys on the lake) + CO-OPS. No river gauges, no NWPS.
+  // Lake/Reservoir → USGS lake gauges + CO-OPS. No river gauges, no NWPS.
+  // River/Stream → USGS river gauges + NWPS forecasts. Skip NDBC (ocean buoys).
+  // Saltwater    → NDBC + CO-OPS. Skip USGS/NWPS.
+  // Pond/Unknown → USGS river gauges as best-effort. Skip NDBC/NWPS unless close.
+
+  const promises: Promise<SensorReading | null>[] = []
+
+  if (isGreatLake || isSaltwater) {
+    promises.push(fetchNDBC(lat, lng))
+    promises.push(fetchCOOPS(lat, lng))
+  } else if (isLake) {
+    promises.push(fetchUSGS(lat, lng, 'LK'))
+    promises.push(fetchCOOPS(lat, lng))
+  } else if (isRiver) {
+    promises.push(fetchUSGS(lat, lng, 'ST'))
+    promises.push(fetchNWPS(lat, lng))
+  } else if (isPond) {
+    promises.push(fetchUSGS(lat, lng, 'ST'))
+  } else {
+    // Unknown — try USGS river gauges and CO-OPS, skip NDBC and NWPS
+    promises.push(fetchUSGS(lat, lng, 'ST'))
+    promises.push(fetchCOOPS(lat, lng))
+  }
+
+  const results = await Promise.allSettled(promises)
+  const readings = results
+    .map(r => r.status === 'fulfilled' ? r.value : null)
+    .filter((r): r is SensorReading => r !== null)
 
   return {
     readings,
