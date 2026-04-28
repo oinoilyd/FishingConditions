@@ -141,7 +141,33 @@ function buildDayTimeline(
   return timeline
 }
 
-function classifyWaterBody(locationName: string): { type: string; context: string } {
+// Bounding boxes for the five Great Lakes (generous margins to catch near-shore pins)
+const GREAT_LAKE_BOUNDS = [
+  { name: 'Lake Michigan', n: 46.1, s: 41.6, e: -84.7, w: -88.0 },
+  { name: 'Lake Superior', n: 49.0, s: 46.3, e: -84.3, w: -92.2 },
+  { name: 'Lake Huron',    n: 46.4, s: 43.0, e: -79.7, w: -84.7 },
+  { name: 'Lake Erie',     n: 42.9, s: 41.4, e: -78.9, w: -83.5 },
+  { name: 'Lake Ontario',  n: 44.0, s: 43.1, e: -76.0, w: -79.9 },
+]
+
+function detectGreatLake(lat: number, lng: number): string | null {
+  for (const lake of GREAT_LAKE_BOUNDS) {
+    if (lat >= lake.s && lat <= lake.n && lng >= lake.w && lng <= lake.e) return lake.name
+  }
+  return null
+}
+
+function classifyWaterBody(locationName: string, lat?: number, lng?: number): { type: string; context: string } {
+  // Coordinate-based Great Lake detection takes priority over name matching —
+  // prevents cities like "Lake Bluff, IL" from being misclassified
+  if (lat != null && lng != null) {
+    const lakeName = detectGreatLake(lat, lng)
+    if (lakeName) return {
+      type: 'Great Lake',
+      context: `WATER BODY: ${lakeName} (Great Lake). Treat this as open, cold, deep water — think like a sea. Depths can exceed 900ft. Focus on nearshore structure (shoals, rocky points, piers, harbor mouths) in shallower zones, and offshore trolling in open water. Realistic species: Salmon, Trout (lake/brown/rainbow/steelhead), Walleye, Smallmouth Bass, Yellow Perch, Pike in harbors/river mouths. Largemouth Bass and Panfish are limited to protected harbor/bay areas only. Wave action, thermoclines, and boat traffic are significant factors. Depth ranges and structure must reflect this massive scale.`,
+    }
+  }
+
   const name = locationName.toLowerCase()
 
   const isGreatLake = /\b(lake michigan|lake superior|lake huron|lake erie|lake ontario)\b/.test(name)
@@ -208,7 +234,7 @@ export async function POST(req: NextRequest) {
     const { lat, lng, locationName, species = 'general', localTime, localDate } = await req.json()
     const speciesLabel = SPECIES_LABELS[species] || 'all species'
 
-    const waterBody = classifyWaterBody(locationName)
+    const waterBody = classifyWaterBody(locationName, lat, lng)
 
     const [weatherRes, waterTemp, sensorBundle] = await Promise.all([
       fetch(

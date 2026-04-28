@@ -67,7 +67,20 @@ export default function Map({ onLocationSelect, historyPins, onHistoryPinSelect,
         const data = await res.json()
         const features = data.features || []
         const waterPattern = /\b(lake|river|creek|bay|pond|reservoir|ocean|sea|gulf|sound|strait|stream|brook|channel|harbor|harbour|inlet|cove|marsh|slough)\b/i
-        const waterFeature = features.find((f: { text?: string }) => waterPattern.test(f.text || ''))
+        // Prefer POI features that are actual water bodies — this catches "Lake Michigan"
+        // before "Lake Bluff" (a city that contains the word "lake")
+        const settlementTypes = ['locality', 'place', 'neighborhood', 'district', 'postcode', 'address']
+        const waterFeature =
+          features.find((f: { text?: string; place_type?: string[] }) =>
+            waterPattern.test(f.text || '') &&
+            f.place_type?.includes('poi') &&
+            !f.place_type?.some((t: string) => settlementTypes.includes(t))
+          ) ||
+          features.find((f: { text?: string; place_type?: string[] }) =>
+            waterPattern.test(f.text || '') &&
+            !f.place_type?.some((t: string) => settlementTypes.includes(t))
+          ) ||
+          features.find((f: { text?: string }) => waterPattern.test(f.text || ''))
         let name: string
         if (waterFeature) {
           const region = features.find((f: { place_type?: string[] }) => f.place_type?.includes('region'))

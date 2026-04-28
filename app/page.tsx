@@ -159,7 +159,18 @@ export default function Home() {
       const data = await res.json()
       const features = data.features || []
       const waterPattern = /\b(lake|river|creek|bay|pond|reservoir|ocean|sea|gulf|sound|strait|stream|brook|channel|harbor|harbour|inlet|cove|marsh|slough)\b/i
-      const waterFeature = features.find((f: { text?: string }) => waterPattern.test(f.text || ''))
+      const settlementTypes = ['locality', 'place', 'neighborhood', 'district', 'postcode', 'address']
+      const waterFeature =
+        features.find((f: { text?: string; place_type?: string[] }) =>
+          waterPattern.test(f.text || '') &&
+          f.place_type?.includes('poi') &&
+          !f.place_type?.some((t: string) => settlementTypes.includes(t))
+        ) ||
+        features.find((f: { text?: string; place_type?: string[] }) =>
+          waterPattern.test(f.text || '') &&
+          !f.place_type?.some((t: string) => settlementTypes.includes(t))
+        ) ||
+        features.find((f: { text?: string }) => waterPattern.test(f.text || ''))
       let name: string
       if (waterFeature) {
         const region = features.find((f: { place_type?: string[] }) => f.place_type?.includes('region'))
