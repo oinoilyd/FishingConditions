@@ -14,16 +14,14 @@ interface DayTimelineProps {
 export default function DayTimeline({ timeline }: DayTimelineProps) {
   if (!timeline?.length) return null
 
-  const now = new Date()
-  const currentHour = now.getHours()
-
   return (
     <div className="mb-5">
       <p className="text-white/40 text-xs uppercase tracking-widest mb-2 px-5">Today&apos;s Windows</p>
       <div className="overflow-x-auto px-5 pb-1">
         <div className="flex gap-2 w-max">
           {timeline.map((slot, i) => {
-            const isCurrent = slot.hour === currentHour
+            // First slot is always the current hour (anchored by past_hours=3 in Open-Meteo)
+            const isCurrent = i === 0
             const color =
               slot.score >= 8 ? 'bg-green-500' :
               slot.score >= 6 ? 'bg-green-400/70' :

@@ -103,21 +103,18 @@ function buildDayTimeline(
   const times: string[] = (hourly.time as string[]) || []
   if (!times.length) return []
 
-  const now = new Date()
-  const currentHour = now.getHours()
+  // With past_hours=3 + forecast_hours=24, Open-Meteo always places the current
+  // local hour at index 3 — no server/client timezone comparison needed.
+  // Show current hour + next 12 hours = 13 slots total.
+  const START_IDX = 3
+  const SLOTS = 13
+
   const timeline = []
 
-  for (let i = 0; i < Math.min(times.length, 48); i++) {
-    // Open-Meteo returns "2026-04-28T14:00" — parse hour directly from string
+  for (let i = START_IDX; i < times.length && timeline.length < SLOTS; i++) {
     const timeStr = times[i]
     if (!timeStr) continue
     const hour = parseInt(timeStr.slice(11, 13), 10)
-    const dateStr = timeStr.slice(0, 10)
-    const todayStr = now.toISOString().slice(0, 10)
-    const tomorrowStr = new Date(now.getTime() + 86400000).toISOString().slice(0, 10)
-
-    if (dateStr !== todayStr && dateStr !== tomorrowStr) continue
-    if (dateStr === todayStr && hour < Math.max(0, currentHour - 1)) continue
 
     const current = {
       wind_speed_10m: (hourly.wind_speed_10m?.[i] as number) ?? 10,
@@ -135,7 +132,6 @@ function buildDayTimeline(
     const quality = overallScore >= 8 ? 'excellent' : overallScore >= 6 ? 'good' : overallScore >= 4 ? 'fair' : 'poor'
 
     timeline.push({ hour, label, score: overallScore, quality })
-    if (timeline.length >= 18) break
   }
 
   return timeline
