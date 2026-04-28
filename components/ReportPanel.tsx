@@ -37,6 +37,7 @@ interface SensorReading {
   source: string
   stationName: string
   distanceMiles: number
+  url?: string
   waterTemp?: string
   waveHeight?: string
   wavePeriod?: string
@@ -234,14 +235,30 @@ export default function ReportPanel({ report, loading, onClose, onSpeciesChange 
                 {report.sensorData.map((s, i) => (
                   <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-white/10' : ''}>
 
-                    {/* Source header */}
-                    <p className="text-emerald-300/80 text-xs font-medium">
-                      {s.source === 'NWS Alerts' ? '⚠️' : s.source === 'NOAA GLERL' ? '🛰️' : '📍'}{' '}
-                      {s.source} — {s.stationName}{' '}
-                      <span className="text-white/30">
-                        {s.distanceMiles === 0 ? '(satellite)' : `(${s.distanceMiles}mi)`}
-                      </span>
-                    </p>
+                    {/* Source header — taps through to live data page */}
+                    {s.url ? (
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-emerald-300/80 text-xs font-medium hover:text-emerald-200 transition-colors group"
+                      >
+                        <span>{s.source === 'NWS Alerts' ? '⚠️' : s.source === 'NOAA GLERL' ? '🛰️' : '📍'}</span>
+                        <span>{s.source} — {s.stationName}</span>
+                        <span className="text-white/30">
+                          {s.distanceMiles === 0 ? '(satellite)' : `(${s.distanceMiles}mi)`}
+                        </span>
+                        <span className="text-white/20 group-hover:text-emerald-400/50 transition-colors">↗</span>
+                      </a>
+                    ) : (
+                      <p className="text-emerald-300/80 text-xs font-medium">
+                        {s.source === 'NWS Alerts' ? '⚠️' : s.source === 'NOAA GLERL' ? '🛰️' : '📍'}{' '}
+                        {s.source} — {s.stationName}{' '}
+                        <span className="text-white/30">
+                          {s.distanceMiles === 0 ? '(satellite)' : `(${s.distanceMiles}mi)`}
+                        </span>
+                      </p>
+                    )}
 
                     {/* NWS Alerts: render as warning chips */}
                     {s.source === 'NWS Alerts' && s.alerts && s.alerts.length > 0 && (
