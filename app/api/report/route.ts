@@ -98,6 +98,7 @@ function scoreConditions(
 function buildDayTimeline(
   hourly: Record<string, (number | string)[]>,
   species: string,
+  currentScore: number,
   waterTempF?: number
 ): Array<{ hour: number; label: string; score: number; quality: string }> {
   const times: string[] = (hourly.time as string[]) || []
@@ -116,22 +117,28 @@ function buildDayTimeline(
     if (!timeStr) continue
     const hour = parseInt(timeStr.slice(11, 13), 10)
 
-    const current = {
-      wind_speed_10m: (hourly.wind_speed_10m?.[i] as number) ?? 10,
-      cloud_cover: (hourly.cloud_cover?.[i] as number) ?? 50,
-      surface_pressure: (hourly.surface_pressure?.[i] as number) ?? 1013,
-      weather_code: (hourly.weather_code?.[i] as number) ?? 0,
-      temperature_2m: (hourly.temperature_2m?.[i] as number) ?? 65,
+    // For the "Now" slot use the already-calculated main score so both cards agree
+    let score: number
+    if (timeline.length === 0) {
+      score = currentScore
+    } else {
+      const current = {
+        wind_speed_10m: (hourly.wind_speed_10m?.[i] as number) ?? 10,
+        cloud_cover: (hourly.cloud_cover?.[i] as number) ?? 50,
+        surface_pressure: (hourly.surface_pressure?.[i] as number) ?? 1013,
+        weather_code: (hourly.weather_code?.[i] as number) ?? 0,
+        temperature_2m: (hourly.temperature_2m?.[i] as number) ?? 65,
+      }
+      const prevPressure = (hourly.surface_pressure?.[Math.max(0, i - 3)] as number) ?? current.surface_pressure
+      const pressureTrend = current.surface_pressure - prevPressure
+      score = scoreConditions(current, pressureTrend, species, waterTempF).overallScore
     }
-    const prevPressure = (hourly.surface_pressure?.[Math.max(0, i - 3)] as number) ?? current.surface_pressure
-    const pressureTrend = current.surface_pressure - prevPressure
-    const { overallScore } = scoreConditions(current, pressureTrend, species, waterTempF)
 
     const isPM = hour >= 12
     const label = hour === 0 ? '12am' : hour === 12 ? '12pm' : isPM ? `${hour - 12}pm` : `${hour}am`
-    const quality = overallScore >= 8 ? 'excellent' : overallScore >= 6 ? 'good' : overallScore >= 4 ? 'fair' : 'poor'
+    const quality = score >= 8 ? 'excellent' : score >= 6 ? 'good' : score >= 4 ? 'fair' : 'poor'
 
-    timeline.push({ hour, label, score: overallScore, quality })
+    timeline.push({ hour, label, score, quality })
   }
 
   return timeline
@@ -253,7 +260,7 @@ export async function POST(req: NextRequest) {
     const waterTempF = bestWaterTemp ? parseFloat(bestWaterTemp) : undefined
 
     const { scores, overallScore } = scoreConditions(current, pressureTrend, species, waterTempF)
-    const dayTimeline = buildDayTimeline(weatherData.hourly ?? {}, species, waterTempF)
+    const dayTimeline = buildDayTimeline(weatherData.hourly ?? {}, species, overallScore, waterTempF)
 
     const pressureTrendLabel =
       pressureTrend < -2 ? 'Falling rapidly' :
