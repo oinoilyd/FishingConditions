@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
-import { getSpeciesContext } from '@/lib/speciesKnowledge'
+import { getSpeciesContext, SPECIES_PROFILES } from '@/lib/speciesKnowledge'
 import { fetchAllSensorData } from '@/lib/sensorData'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -34,8 +34,24 @@ function weatherCodeToLabel(code: number): string {
   return 'Severe thunderstorm'
 }
 
-function scoreConditions(current: Record<string, number>, pressureTrend: number) {
-  const scores = { pressure: 0, wind: 0, clouds: 0, weather: 0, temperature: 0 }
+function scoreWaterTemp(waterTempF: number, species: string): number {
+  const profile = SPECIES_PROFILES[species]
+  const optimal = profile?.optimalTempRange || { min: 60, max: 75 }
+  if (waterTempF >= optimal.min && waterTempF <= optimal.max) return 10
+  const dist = waterTempF < optimal.min ? optimal.min - waterTempF : waterTempF - optimal.max
+  if (dist <= 5) return 7
+  if (dist <= 10) return 4
+  if (dist <= 15) return 2
+  return 0
+}
+
+function scoreConditions(
+  current: Record<string, number>,
+  pressureTrend: number,
+  species = 'general',
+  waterTempF?: number
+) {
+  const scores = { pressure: 0, wind: 0, clouds: 0, weather: 0, airTemp: 0, waterTemp: 0 }
 
   if (pressureTrend < -2) scores.pressure = 22
   else if (pressureTrend < -0.5) scores.pressure = 25
@@ -64,15 +80,56 @@ function scoreConditions(current: Record<string, number>, pressureTrend: number)
   else scores.weather = 2
 
   const temp = current.temperature_2m
-  if (temp >= 55 && temp <= 72) scores.temperature = 15
-  else if ((temp >= 45 && temp < 55) || (temp > 72 && temp <= 80)) scores.temperature = 10
-  else if ((temp >= 35 && temp < 45) || (temp > 80 && temp <= 90)) scores.temperature = 5
-  else scores.temperature = 2
+  if (temp >= 55 && temp <= 72) scores.airTemp = 10
+  else if ((temp >= 45 && temp < 55) || (temp > 72 && temp <= 80)) scores.airTemp = 7
+  else if ((temp >= 35 && temp < 45) || (temp > 80 && temp <= 90)) scores.airTemp = 4
+  else scores.airTemp = 2
 
-  const total = scores.pressure + scores.wind + scores.clouds + scores.weather + scores.temperature
-  const overallScore = Math.min(10, Math.max(1, Math.round(total / 10)))
+  if (waterTempF != null) scores.waterTemp = scoreWaterTemp(waterTempF, species)
+
+  const baseTotal = scores.pressure + scores.wind + scores.clouds + scores.weather + scores.airTemp
+  const total = baseTotal + scores.waterTemp
+  const maxPossible = waterTempF != null ? 110 : 100
+  const overallScore = Math.min(10, Math.max(1, Math.round((total / maxPossible) * 10)))
 
   return { scores, total, overallScore }
+}
+
+function buildDayTimeline(
+  hourly: Record<string, number[]>,
+  species: string,
+  waterTempF?: number
+): Array<{ hour: number; label: string; score: number; quality: string }> {
+  const now = new Date()
+  const currentHour = now.getHours()
+  const timeline = []
+
+  for (let i = 0; i < Math.min(hourly.time?.length ?? 0, 48); i++) {
+    const slotDate = new Date(hourly.time[i])
+    const hour = slotDate.getHours()
+    const dayOffset = slotDate.getDate() - now.getDate()
+    if (dayOffset > 1 || dayOffset < 0) continue
+    if (dayOffset === 0 && hour < Math.max(0, currentHour - 1)) continue
+
+    const current = {
+      wind_speed_10m: hourly.wind_speed_10m?.[i] ?? 10,
+      cloud_cover: hourly.cloud_cover?.[i] ?? 50,
+      surface_pressure: hourly.surface_pressure?.[i] ?? 1013,
+      weather_code: hourly.weather_code?.[i] ?? 0,
+      temperature_2m: hourly.temperature_2m?.[i] ?? 65,
+    }
+    const prevPressure = hourly.surface_pressure?.[Math.max(0, i - 3)] ?? current.surface_pressure
+    const pressureTrend = current.surface_pressure - prevPressure
+    const { overallScore } = scoreConditions(current, pressureTrend, species, waterTempF)
+
+    const label = slotDate.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })
+    const quality = overallScore >= 8 ? 'excellent' : overallScore >= 6 ? 'good' : overallScore >= 4 ? 'fair' : 'poor'
+
+    timeline.push({ hour, label, score: overallScore, quality })
+    if (timeline.length >= 18) break
+  }
+
+  return timeline
 }
 
 function classifyWaterBody(locationName: string): { type: string; context: string } {
@@ -146,7 +203,7 @@ export async function POST(req: NextRequest) {
 
     const [weatherRes, waterTemp, sensorBundle] = await Promise.all([
       fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=surface_pressure&past_hours=3&forecast_hours=1&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=temperature_2m,wind_speed_10m,cloud_cover,surface_pressure,weather_code,time&past_hours=3&forecast_hours=24&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
       ),
       fetchWaterTemp(lat, lng),
       fetchAllSensorData(lat, lng, waterBody.type),
@@ -159,7 +216,13 @@ export async function POST(req: NextRequest) {
       ? hourlyPressure[hourlyPressure.length - 1] - hourlyPressure[0]
       : 0
 
-    const { scores, overallScore } = scoreConditions(current, pressureTrend)
+    // Resolve best available water temp: sensor first, marine model fallback
+    const sensorWaterTemp = sensorBundle.readings.find(r => r.waterTemp)?.waterTemp
+    const bestWaterTemp = sensorWaterTemp || waterTemp
+    const waterTempF = bestWaterTemp ? parseFloat(bestWaterTemp) : undefined
+
+    const { scores, overallScore } = scoreConditions(current, pressureTrend, species, waterTempF)
+    const dayTimeline = buildDayTimeline(weatherData.hourly ?? {}, species, waterTempF)
 
     const pressureTrendLabel =
       pressureTrend < -2 ? 'Falling rapidly' :
@@ -175,10 +238,13 @@ export async function POST(req: NextRequest) {
       weatherCondition: weatherCodeToLabel(current.weather_code),
       humidity: `${current.relative_humidity_2m}%`,
       precipitation: `${current.precipitation} mm`,
-      waterTemp: waterTemp ?? undefined,
+      waterTemp: bestWaterTemp ?? undefined,
+      waterTempSource: sensorWaterTemp ? 'sensor' : waterTemp ? 'model' : undefined,
     }
 
-    const waterTempLine = waterTemp ? `Water Temperature (marine model): ${waterTemp}` : 'Water Temperature (marine model): Not available'
+    const waterTempLine = bestWaterTemp
+      ? `Water Temperature (${sensorWaterTemp ? 'sensor' : 'marine model'}): ${bestWaterTemp}`
+      : 'Water Temperature: Not available'
 
     const sensorLines = sensorBundle.readings.length > 0
       ? '\nREAL SENSOR DATA (from physical monitoring stations — prioritize this over modeled data):\n' +
@@ -227,7 +293,7 @@ Humidity: ${conditions.humidity}
 Precipitation: ${conditions.precipitation}
 ${waterTempLine}${sensorLines}
 Overall Fishing Score: ${overallScore}/10
-Score Breakdown — Pressure: ${scores.pressure}/25, Wind: ${scores.wind}/20, Clouds: ${scores.clouds}/15, Weather: ${scores.weather}/15, Temperature: ${scores.temperature}/15
+Score Breakdown — Pressure: ${scores.pressure}/25, Wind: ${scores.wind}/20, Clouds: ${scores.clouds}/15, Weather: ${scores.weather}/15, Air Temp: ${scores.airTemp}/10${waterTempF != null ? `, Water Temp (${speciesLabel}): ${scores.waterTemp}/10` : ''}
 
 Keep responses focused and useful — not too brief, not too long. Narrative fields should be 2-3 sentences with real insight. Grid fields should be concise phrases. Reference the specific current time (${localTime}) where relevant — never say "early feeding window", say "at ${localTime} fish are doing X."
 
@@ -259,6 +325,7 @@ Return ONLY a valid JSON object with exactly these fields, no extra text:
       species,
       conditions,
       sensorData: sensorBundle.hasRealData ? sensorBundle.readings : null,
+      dayTimeline,
     })
   } catch (error) {
     console.error('Report error:', error)

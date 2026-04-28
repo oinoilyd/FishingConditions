@@ -4,8 +4,7 @@ import dynamic from 'next/dynamic'
 import SearchBar from '@/components/SearchBar'
 import ReportPanel from '@/components/ReportPanel'
 import LoadingReport from '@/components/LoadingReport'
-import HistoryPanel from '@/components/HistoryPanel'
-import { addToHistory, type HistoryEntry } from '@/lib/history'
+import { addToHistory, getHistory, type HistoryEntry } from '@/lib/history'
 
 const Map = dynamic(() => import('@/components/Map'), { ssr: false })
 
@@ -21,16 +20,10 @@ const SPECIES = [
   { value: 'panfish', label: 'Panfish / Crappie / Bluegill' },
 ]
 
-interface Location {
-  lat: number
-  lng: number
-  name: string
-}
-
-interface CacheEntry {
-  report: unknown
-  timestamp: number
-}
+interface Location { lat: number; lng: number; name: string }
+interface CacheEntry { report: unknown; timestamp: number }
+interface BestSpot { lat: number; lng: number; score: number }
+interface MapBounds { north: number; south: number; east: number; west: number }
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<'search' | 'map'>('map')
@@ -40,12 +33,20 @@ export default function Home() {
   const [report, setReport] = useState(null)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const [historyPins, setHistoryPins] = useState<HistoryEntry[]>([])
+  const [bestSpots, setBestSpots] = useState<BestSpot[]>([])
+  const [loadingBest, setLoadingBest] = useState(false)
+  const [showBest, setShowBest] = useState(false)
+  const mapBoundsRef = useRef<MapBounds | null>(null)
   const cacheRef = useRef<Record<string, CacheEntry>>({})
 
   const handleLocationSelect = useCallback((lat: number, lng: number, name: string) => {
     setLocation({ lat, lng, name })
     setReport(null)
     setError(null)
+    // Turn off history mode when a new pin is dropped
+    setShowHistory(false)
+    setHistoryPins([])
   }, [])
 
   const fetchReport = async (targetSpecies: string, loc?: Location) => {
@@ -100,8 +101,19 @@ export default function Home() {
     fetchReport(newSpecies)
   }
 
-  const handleHistorySelect = (entry: HistoryEntry) => {
+  const handleHistoryToggle = () => {
+    if (showHistory) {
+      setShowHistory(false)
+      setHistoryPins([])
+    } else {
+      setShowHistory(true)
+      setHistoryPins(getHistory())
+    }
+  }
+
+  const handleHistoryPinSelect = (entry: HistoryEntry) => {
     setShowHistory(false)
+    setHistoryPins([])
     const loc = { lat: entry.lat, lng: entry.lng, name: entry.name }
     setLocation(loc)
     setSpecies(entry.species)
@@ -109,6 +121,33 @@ export default function Home() {
     setError(null)
     fetchReport(entry.species, loc)
   }
+
+  const handleBestConditions = async () => {
+    if (showBest) {
+      setShowBest(false)
+      setBestSpots([])
+      return
+    }
+    if (!mapBoundsRef.current) return
+    setLoadingBest(true)
+    setShowBest(true)
+    try {
+      const res = await fetch('/api/scores', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mapBoundsRef.current),
+      })
+      const data = await res.json()
+      setBestSpots(data.scores || [])
+    } catch {
+      setBestSpots([])
+    }
+    setLoadingBest(false)
+  }
+
+  const handleBoundsChange = useCallback((bounds: MapBounds) => {
+    mapBoundsRef.current = bounds
+  }, [])
 
   const selectedSpeciesLabel = SPECIES.find(s => s.value === species)?.label || 'All Species'
 
@@ -125,11 +164,13 @@ export default function Home() {
             </div>
           </div>
           <button
-            onClick={() => setShowHistory(true)}
-            className="flex items-center gap-1.5 bg-white/10 hover:bg-white/15 active:scale-95 transition-all px-3 py-2 rounded-xl"
+            onClick={handleHistoryToggle}
+            className={`flex items-center gap-1.5 active:scale-95 transition-all px-3 py-2 rounded-xl ${
+              showHistory ? 'bg-amber-500/20 text-amber-300' : 'bg-white/10 hover:bg-white/15 text-white/70'
+            }`}
           >
             <span className="text-base">🕐</span>
-            <span className="text-white/70 text-xs font-medium">History</span>
+            <span className="text-xs font-medium">{showHistory ? 'Hide' : 'History'}</span>
           </button>
         </div>
       </div>
@@ -140,9 +181,7 @@ export default function Home() {
           <button
             onClick={() => setActiveTab('map')}
             className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              activeTab === 'map'
-                ? 'bg-blue-500 text-white shadow-lg'
-                : 'text-white/50 hover:text-white'
+              activeTab === 'map' ? 'bg-blue-500 text-white shadow-lg' : 'text-white/50 hover:text-white'
             }`}
           >
             Drop a Pin
@@ -150,9 +189,7 @@ export default function Home() {
           <button
             onClick={() => setActiveTab('search')}
             className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              activeTab === 'search'
-                ? 'bg-blue-500 text-white shadow-lg'
-                : 'text-white/50 hover:text-white'
+              activeTab === 'search' ? 'bg-blue-500 text-white shadow-lg' : 'text-white/50 hover:text-white'
             }`}
           >
             Search Location
@@ -170,8 +207,37 @@ export default function Home() {
             </p>
           </div>
         ) : (
-          <div className="rounded-2xl overflow-hidden border border-white/10" style={{ height: '420px' }}>
-            <Map onLocationSelect={handleLocationSelect} />
+          <div className="relative rounded-2xl overflow-hidden border border-white/10" style={{ height: '420px' }}>
+            <Map
+              onLocationSelect={handleLocationSelect}
+              historyPins={showHistory ? historyPins : []}
+              onHistoryPinSelect={handleHistoryPinSelect}
+              bestSpots={showBest ? bestSpots : []}
+              onBoundsChange={handleBoundsChange}
+            />
+            {/* Best Conditions button — sits inside map */}
+            <button
+              onClick={handleBestConditions}
+              className={`absolute top-3 left-3 z-10 flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all active:scale-95 shadow-lg ${
+                showBest
+                  ? 'bg-green-500 text-white'
+                  : 'bg-slate-900/80 text-white/80 hover:bg-slate-800'
+              }`}
+            >
+              {loadingBest ? (
+                <span className="animate-pulse">Scanning...</span>
+              ) : (
+                <><span>🌿</span><span>{showBest ? 'Hide Best' : 'Best Conditions'}</span></>
+              )}
+            </button>
+            {showHistory && historyPins.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="bg-black/70 rounded-2xl px-5 py-4 text-center">
+                  <p className="text-white/60 text-sm">No history yet</p>
+                  <p className="text-white/30 text-xs mt-1">Past pins will appear here</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -204,7 +270,7 @@ export default function Home() {
       <div className="h-32" />
 
       {/* Floating bottom bar */}
-      {location && !loading && !report && (
+      {location && !loading && !report && !showHistory && (
         <div className="fixed bottom-0 left-0 right-0 z-40 px-5 pb-8 pt-4 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent">
           <div className="mb-2 bg-white/5 rounded-2xl px-4 py-3 border border-white/10">
             <p className="text-white/40 text-xs uppercase tracking-widest mb-0.5">Selected Location</p>
@@ -227,13 +293,6 @@ export default function Home() {
           loading={loading}
           onClose={() => { setReport(null); setLoading(false) }}
           onSpeciesChange={handleSpeciesChangeFromPanel}
-        />
-      )}
-
-      {showHistory && (
-        <HistoryPanel
-          onSelect={handleHistorySelect}
-          onClose={() => setShowHistory(false)}
         />
       )}
     </main>

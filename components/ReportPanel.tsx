@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import GlossaryText from '@/components/GlossaryText'
 import LoadingReport from '@/components/LoadingReport'
+import DayTimeline from '@/components/DayTimeline'
 
 const SPECIES = [
   { value: 'general', label: 'General' },
@@ -22,6 +23,14 @@ interface Conditions {
   cloudCover: string
   weatherCondition: string
   waterTemp?: string
+  waterTempSource?: 'sensor' | 'model'
+}
+
+interface TimelineSlot {
+  hour: number
+  label: string
+  score: number
+  quality: string
 }
 
 interface SensorReading {
@@ -61,6 +70,7 @@ interface Report {
   riskFlags: string[]
   conditions: Conditions
   sensorData?: SensorReading[] | null
+  dayTimeline?: TimelineSlot[]
 }
 
 interface ReportPanelProps {
@@ -204,7 +214,13 @@ export default function ReportPanel({ report, loading, onClose, onSpeciesChange 
                 </div>
                 {report.conditions.waterTemp && (
                   <div className="flex items-start gap-2 text-xs text-white/60">
-                    <span>🌊</span><span>Water temp {report.conditions.waterTemp}</span>
+                    <span>🌊</span>
+                    <span>
+                      Water {report.conditions.waterTemp}
+                      {report.conditions.waterTempSource === 'sensor' && (
+                        <span className="ml-1 text-emerald-400/70">● sensor</span>
+                      )}
+                    </span>
                   </div>
                 )}
               </div>
@@ -247,6 +263,11 @@ export default function ReportPanel({ report, loading, onClose, onSpeciesChange 
                   </div>
                 ))}
               </div>
+            )}
+
+            {/* Day Timeline */}
+            {report.dayTimeline && report.dayTimeline.length > 0 && (
+              <DayTimeline timeline={report.dayTimeline} />
             )}
 
             {/* Risk Flags */}
