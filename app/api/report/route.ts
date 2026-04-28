@@ -96,33 +96,42 @@ function scoreConditions(
 }
 
 function buildDayTimeline(
-  hourly: Record<string, number[]>,
+  hourly: Record<string, (number | string)[]>,
   species: string,
   waterTempF?: number
 ): Array<{ hour: number; label: string; score: number; quality: string }> {
+  const times: string[] = (hourly.time as string[]) || []
+  if (!times.length) return []
+
   const now = new Date()
   const currentHour = now.getHours()
   const timeline = []
 
-  for (let i = 0; i < Math.min(hourly.time?.length ?? 0, 48); i++) {
-    const slotDate = new Date(hourly.time[i])
-    const hour = slotDate.getHours()
-    const dayOffset = slotDate.getDate() - now.getDate()
-    if (dayOffset > 1 || dayOffset < 0) continue
-    if (dayOffset === 0 && hour < Math.max(0, currentHour - 1)) continue
+  for (let i = 0; i < Math.min(times.length, 48); i++) {
+    // Open-Meteo returns "2026-04-28T14:00" — parse hour directly from string
+    const timeStr = times[i]
+    if (!timeStr) continue
+    const hour = parseInt(timeStr.slice(11, 13), 10)
+    const dateStr = timeStr.slice(0, 10)
+    const todayStr = now.toISOString().slice(0, 10)
+    const tomorrowStr = new Date(now.getTime() + 86400000).toISOString().slice(0, 10)
+
+    if (dateStr !== todayStr && dateStr !== tomorrowStr) continue
+    if (dateStr === todayStr && hour < Math.max(0, currentHour - 1)) continue
 
     const current = {
-      wind_speed_10m: hourly.wind_speed_10m?.[i] ?? 10,
-      cloud_cover: hourly.cloud_cover?.[i] ?? 50,
-      surface_pressure: hourly.surface_pressure?.[i] ?? 1013,
-      weather_code: hourly.weather_code?.[i] ?? 0,
-      temperature_2m: hourly.temperature_2m?.[i] ?? 65,
+      wind_speed_10m: (hourly.wind_speed_10m?.[i] as number) ?? 10,
+      cloud_cover: (hourly.cloud_cover?.[i] as number) ?? 50,
+      surface_pressure: (hourly.surface_pressure?.[i] as number) ?? 1013,
+      weather_code: (hourly.weather_code?.[i] as number) ?? 0,
+      temperature_2m: (hourly.temperature_2m?.[i] as number) ?? 65,
     }
-    const prevPressure = hourly.surface_pressure?.[Math.max(0, i - 3)] ?? current.surface_pressure
+    const prevPressure = (hourly.surface_pressure?.[Math.max(0, i - 3)] as number) ?? current.surface_pressure
     const pressureTrend = current.surface_pressure - prevPressure
     const { overallScore } = scoreConditions(current, pressureTrend, species, waterTempF)
 
-    const label = slotDate.toLocaleTimeString('en-US', { hour: 'numeric', hour12: true })
+    const isPM = hour >= 12
+    const label = hour === 0 ? '12am' : hour === 12 ? '12pm' : isPM ? `${hour - 12}pm` : `${hour}am`
     const quality = overallScore >= 8 ? 'excellent' : overallScore >= 6 ? 'good' : overallScore >= 4 ? 'fair' : 'poor'
 
     timeline.push({ hour, label, score: overallScore, quality })
@@ -203,7 +212,7 @@ export async function POST(req: NextRequest) {
 
     const [weatherRes, waterTemp, sensorBundle] = await Promise.all([
       fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=temperature_2m,wind_speed_10m,cloud_cover,surface_pressure,weather_code,time&past_hours=3&forecast_hours=24&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
+        `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=temperature_2m,wind_speed_10m,cloud_cover,surface_pressure,weather_code&past_hours=3&forecast_hours=24&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
       ),
       fetchWaterTemp(lat, lng),
       fetchAllSensorData(lat, lng, waterBody.type),
@@ -272,7 +281,7 @@ export async function POST(req: NextRequest) {
 
     const message = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1024,
+      max_tokens: 2048,
       messages: [{
         role: 'user',
         content: `You are a fishing intelligence engine. Analyze these real-time conditions and generate a fishing report specifically for ${speciesLabel}.

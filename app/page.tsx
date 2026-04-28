@@ -5,6 +5,7 @@ import SearchBar from '@/components/SearchBar'
 import ReportPanel from '@/components/ReportPanel'
 import LoadingReport from '@/components/LoadingReport'
 import { addToHistory, getHistory, type HistoryEntry } from '@/lib/history'
+import BestConditionsPanel from '@/components/BestConditionsPanel'
 
 const Map = dynamic(() => import('@/components/Map'), { ssr: false })
 
@@ -149,6 +150,37 @@ export default function Home() {
     mapBoundsRef.current = bounds
   }, [])
 
+  const handleBestSpotSelect = async (spot: BestSpot) => {
+    setShowBest(false)
+    try {
+      const res = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${spot.lng},${spot.lat}.json?access_token=${process.env.NEXT_PUBLIC_MAPBOX_TOKEN}&types=poi,place,locality,region,district`
+      )
+      const data = await res.json()
+      const features = data.features || []
+      const waterPattern = /\b(lake|river|creek|bay|pond|reservoir|ocean|sea|gulf|sound|strait|stream|brook|channel|harbor|harbour|inlet|cove|marsh|slough)\b/i
+      const waterFeature = features.find((f: { text?: string }) => waterPattern.test(f.text || ''))
+      let name: string
+      if (waterFeature) {
+        const region = features.find((f: { place_type?: string[] }) => f.place_type?.includes('region'))
+        name = region ? `${waterFeature.text}, ${region.text}` : waterFeature.text
+      } else {
+        name = features[0]?.place_name || `${spot.lat.toFixed(4)}, ${spot.lng.toFixed(4)}`
+      }
+      const loc = { lat: spot.lat, lng: spot.lng, name }
+      setLocation(loc)
+      setReport(null)
+      setError(null)
+      fetchReport(species, loc)
+    } catch {
+      const loc = { lat: spot.lat, lng: spot.lng, name: `${spot.lat.toFixed(4)}, ${spot.lng.toFixed(4)}` }
+      setLocation(loc)
+      setReport(null)
+      setError(null)
+      fetchReport(species, loc)
+    }
+  }
+
   const selectedSpeciesLabel = SPECIES.find(s => s.value === species)?.label || 'All Species'
 
   return (
@@ -285,6 +317,15 @@ export default function Home() {
             Get Fishing Report
           </button>
         </div>
+      )}
+
+      {showBest && (
+        <BestConditionsPanel
+          spots={bestSpots}
+          loading={loadingBest}
+          onSelect={handleBestSpotSelect}
+          onClose={() => { setShowBest(false); setBestSpots([]) }}
+        />
       )}
 
       {(report || loading) && location && (
