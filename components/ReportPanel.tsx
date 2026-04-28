@@ -1,6 +1,7 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import GlossaryText from '@/components/GlossaryText'
+import LoadingReport from '@/components/LoadingReport'
 
 const SPECIES = [
   { value: 'general', label: 'General' },
@@ -40,7 +41,8 @@ interface Report {
 }
 
 interface ReportPanelProps {
-  report: Report
+  report: Report | null
+  loading?: boolean
   onClose: () => void
   onSpeciesChange: (species: string) => void
 }
@@ -99,8 +101,17 @@ function BaitCard({ baitProfile, baitAlternatives }: { baitProfile: string; bait
   )
 }
 
-export default function ReportPanel({ report, onClose, onSpeciesChange }: ReportPanelProps) {
-  const [activeSpecies, setActiveSpecies] = useState(report.species || 'general')
+export default function ReportPanel({ report, loading, onClose, onSpeciesChange }: ReportPanelProps) {
+  const [activeSpecies, setActiveSpecies] = useState(report?.species || 'general')
+
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  useEffect(() => {
+    if (report?.species) setActiveSpecies(report.species)
+  }, [report?.species])
 
   const handleSpeciesChange = (value: string) => {
     setActiveSpecies(value)
@@ -121,7 +132,7 @@ export default function ReportPanel({ report, onClose, onSpeciesChange }: Report
         <div className="px-5 pt-3 pb-4 flex items-start justify-between">
           <div>
             <h2 className="text-white font-bold text-lg">Fishing Report</h2>
-            <p className="text-white/40 text-xs mt-0.5 max-w-[260px] truncate">{report.locationName}</p>
+            <p className="text-white/40 text-xs mt-0.5 max-w-[260px] truncate">{report?.locationName}</p>
           </div>
           <button onClick={onClose} className="text-white/40 hover:text-white text-3xl leading-none mt-0.5">×</button>
         </div>
@@ -146,65 +157,73 @@ export default function ReportPanel({ report, onClose, onSpeciesChange }: Report
           </div>
         </div>
 
-        {/* Score + Conditions */}
-        <div className="mx-5 mb-5 bg-white/5 rounded-2xl p-4 border border-white/10 flex items-stretch gap-4">
-          <ScoreRing score={report.score} />
-          <div className="flex-1 border-l border-white/10 pl-4 space-y-2 justify-center flex flex-col">
-            <div className="flex items-start gap-2 text-xs text-white/60">
-              <span>🌡</span><span>{report.conditions.temperature}</span>
+        {loading ? (
+          <div className="px-5 pb-10">
+            <LoadingReport />
+          </div>
+        ) : report && (
+          <>
+            {/* Score + Conditions */}
+            <div className="mx-5 mb-5 bg-white/5 rounded-2xl p-4 border border-white/10 flex items-stretch gap-4">
+              <ScoreRing score={report.score} />
+              <div className="flex-1 border-l border-white/10 pl-4 space-y-2 justify-center flex flex-col">
+                <div className="flex items-start gap-2 text-xs text-white/60">
+                  <span>🌡</span><span>{report.conditions.temperature}</span>
+                </div>
+                <div className="flex items-start gap-2 text-xs text-white/60">
+                  <span>💨</span><span>{report.conditions.wind}</span>
+                </div>
+                <div className="flex items-start gap-2 text-xs text-white/60">
+                  <span>📊</span><span><GlossaryText text={report.conditions.pressure} /></span>
+                </div>
+                <div className="flex items-start gap-2 text-xs text-white/60">
+                  <span>☁️</span><span>{report.conditions.cloudCover} clouds · {report.conditions.weatherCondition}</span>
+                </div>
+                {report.conditions.waterTemp && (
+                  <div className="flex items-start gap-2 text-xs text-white/60">
+                    <span>🌊</span><span>Water temp {report.conditions.waterTemp}</span>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="flex items-start gap-2 text-xs text-white/60">
-              <span>💨</span><span>{report.conditions.wind}</span>
-            </div>
-            <div className="flex items-start gap-2 text-xs text-white/60">
-              <span>📊</span><span><GlossaryText text={report.conditions.pressure} /></span>
-            </div>
-            <div className="flex items-start gap-2 text-xs text-white/60">
-              <span>☁️</span><span>{report.conditions.cloudCover} clouds · {report.conditions.weatherCondition}</span>
-            </div>
-            {report.conditions.waterTemp && (
-              <div className="flex items-start gap-2 text-xs text-white/60">
-                <span>🌊</span><span>Water temp {report.conditions.waterTemp}</span>
+
+            {/* Risk Flags */}
+            {report.riskFlags?.length > 0 && (
+              <div className="mx-5 mb-5 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                <p className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-2">⚠️ Warnings</p>
+                {report.riskFlags.map((flag, i) => (
+                  <p key={i} className="text-red-300/80 text-sm">{flag}</p>
+                ))}
               </div>
             )}
-          </div>
-        </div>
 
-        {/* Risk Flags */}
-        {report.riskFlags?.length > 0 && (
-          <div className="mx-5 mb-5 bg-red-500/10 border border-red-500/20 rounded-xl p-3">
-            <p className="text-red-400 text-xs font-semibold uppercase tracking-wide mb-2">⚠️ Warnings</p>
-            {report.riskFlags.map((flag, i) => (
-              <p key={i} className="text-red-300/80 text-sm">{flag}</p>
-            ))}
-          </div>
+            {/* Report Body */}
+            <div className="px-5 pb-10">
+              <Section title="Summary" content={report.summary} />
+              <Section title="Why These Conditions Matter" content={report.conditionsInterpretation} />
+              <Section title="Tactical Recommendation" content={report.tacticalRecommendation} />
+
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                  <p className="text-white/40 text-xs mb-1">Depth Range</p>
+                  <p className="text-white/90 text-sm"><GlossaryText text={report.depthRange} /></p>
+                </div>
+
+                <BaitCard baitProfile={report.baitProfile} baitAlternatives={report.baitAlternatives} />
+
+                <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                  <p className="text-white/40 text-xs mb-1">Retrieval Style</p>
+                  <p className="text-white/90 text-sm"><GlossaryText text={report.retrievalStyle} /></p>
+                </div>
+
+                <div className="bg-white/5 rounded-xl p-3 border border-white/10">
+                  <p className="text-white/40 text-xs mb-1">Target Structure</p>
+                  <p className="text-white/90 text-sm"><GlossaryText text={report.structureTypes} /></p>
+                </div>
+              </div>
+            </div>
+          </>
         )}
-
-        {/* Report Body */}
-        <div className="px-5 pb-10">
-          <Section title="Summary" content={report.summary} />
-          <Section title="Why These Conditions Matter" content={report.conditionsInterpretation} />
-          <Section title="Tactical Recommendation" content={report.tacticalRecommendation} />
-
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-              <p className="text-white/40 text-xs mb-1">Depth Range</p>
-              <p className="text-white/90 text-sm"><GlossaryText text={report.depthRange} /></p>
-            </div>
-
-            <BaitCard baitProfile={report.baitProfile} baitAlternatives={report.baitAlternatives} />
-
-            <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-              <p className="text-white/40 text-xs mb-1">Retrieval Style</p>
-              <p className="text-white/90 text-sm"><GlossaryText text={report.retrievalStyle} /></p>
-            </div>
-
-            <div className="bg-white/5 rounded-xl p-3 border border-white/10">
-              <p className="text-white/40 text-xs mb-1">Target Structure</p>
-              <p className="text-white/90 text-sm"><GlossaryText text={report.structureTypes} /></p>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   )

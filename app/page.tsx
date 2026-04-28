@@ -86,7 +86,6 @@ export default function Home() {
 
   const handleSpeciesChangeFromPanel = (newSpecies: string) => {
     setSpecies(newSpecies)
-    setReport(null)
     fetchReport(newSpecies)
   }
 
@@ -192,10 +191,11 @@ export default function Home() {
         </div>
       )}
 
-      {report && (
+      {(report || loading) && location && (
         <ReportPanel
           report={report}
-          onClose={() => setReport(null)}
+          loading={loading}
+          onClose={() => { setReport(null); setLoading(false) }}
           onSpeciesChange={handleSpeciesChangeFromPanel}
         />
       )}
