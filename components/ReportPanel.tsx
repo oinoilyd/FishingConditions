@@ -24,6 +24,18 @@ interface Conditions {
   waterTemp?: string
 }
 
+interface SensorReading {
+  source: string
+  stationName: string
+  distanceMiles: number
+  waterTemp?: string
+  waveHeight?: string
+  wavePeriod?: string
+  waterLevel?: string
+  flowRate?: string
+  gaugeHeight?: string
+}
+
 interface Report {
   score: number
   locationName: string
@@ -38,6 +50,7 @@ interface Report {
   structureTypes: string
   riskFlags: string[]
   conditions: Conditions
+  sensorData?: SensorReading[] | null
 }
 
 interface ReportPanelProps {
@@ -186,6 +199,26 @@ export default function ReportPanel({ report, loading, onClose, onSpeciesChange 
                 )}
               </div>
             </div>
+
+            {/* Sensor Data */}
+            {report.sensorData && report.sensorData.length > 0 && (
+              <div className="mx-5 mb-5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-3">
+                <p className="text-emerald-400 text-xs font-semibold uppercase tracking-wide mb-2">📡 Live Sensor Data</p>
+                {report.sensorData.map((s, i) => (
+                  <div key={i} className={i > 0 ? 'mt-2 pt-2 border-t border-white/10' : ''}>
+                    <p className="text-emerald-300/80 text-xs font-medium">{s.source} — {s.stationName} <span className="text-white/30">({s.distanceMiles}mi)</span></p>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {s.waterTemp && <span className="text-white/60 text-xs">🌊 {s.waterTemp}</span>}
+                      {s.waveHeight && <span className="text-white/60 text-xs">🌊 {s.waveHeight} waves</span>}
+                      {s.wavePeriod && <span className="text-white/60 text-xs">⏱ {s.wavePeriod} period</span>}
+                      {s.waterLevel && <span className="text-white/60 text-xs">📏 {s.waterLevel}</span>}
+                      {s.flowRate && <span className="text-white/60 text-xs">💧 {s.flowRate}</span>}
+                      {s.gaugeHeight && <span className="text-white/60 text-xs">📏 {s.gaugeHeight}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Risk Flags */}
             {report.riskFlags?.length > 0 && (

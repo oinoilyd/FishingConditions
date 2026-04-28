@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { getSpeciesContext } from '@/lib/speciesKnowledge'
+import { fetchAllSensorData } from '@/lib/sensorData'
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
@@ -141,11 +142,12 @@ export async function POST(req: NextRequest) {
     const { lat, lng, locationName, species = 'general', localTime, localDate } = await req.json()
     const speciesLabel = SPECIES_LABELS[species] || 'all species'
 
-    const [weatherRes, waterTemp] = await Promise.all([
+    const [weatherRes, waterTemp, sensorBundle] = await Promise.all([
       fetch(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=surface_pressure&past_hours=3&forecast_hours=1&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
       ),
       fetchWaterTemp(lat, lng),
+      fetchAllSensorData(lat, lng),
     ])
 
     const weatherData = await weatherRes.json()
@@ -174,7 +176,21 @@ export async function POST(req: NextRequest) {
       waterTemp: waterTemp ?? undefined,
     }
 
-    const waterTempLine = waterTemp ? `Water Temperature: ${waterTemp}` : 'Water Temperature: Not available for this location (use air temp and season to estimate)'
+    const waterTempLine = waterTemp ? `Water Temperature (marine model): ${waterTemp}` : 'Water Temperature (marine model): Not available'
+
+    const sensorLines = sensorBundle.readings.length > 0
+      ? '\nREAL SENSOR DATA (from physical monitoring stations — prioritize this over modeled data):\n' +
+        sensorBundle.readings.map(r => {
+          const parts = [`[${r.source} — ${r.stationName}, ${r.distanceMiles}mi away]`]
+          if (r.waterTemp) parts.push(`  Water Temp: ${r.waterTemp}`)
+          if (r.waveHeight) parts.push(`  Wave Height: ${r.waveHeight}`)
+          if (r.wavePeriod) parts.push(`  Wave Period: ${r.wavePeriod}`)
+          if (r.waterLevel) parts.push(`  Water Level: ${r.waterLevel}`)
+          if (r.flowRate) parts.push(`  Flow Rate: ${r.flowRate}`)
+          if (r.gaugeHeight) parts.push(`  Gauge Height: ${r.gaugeHeight}`)
+          return parts.join('\n')
+        }).join('\n')
+      : ''
 
     const speciesContext = getSpeciesContext(species)
     const waterBody = classifyWaterBody(locationName)
@@ -200,7 +216,7 @@ Cloud Cover: ${conditions.cloudCover}
 Weather: ${conditions.weatherCondition}
 Humidity: ${conditions.humidity}
 Precipitation: ${conditions.precipitation}
-${waterTempLine}
+${waterTempLine}${sensorLines}
 Overall Fishing Score: ${overallScore}/10
 Score Breakdown — Pressure: ${scores.pressure}/25, Wind: ${scores.wind}/20, Clouds: ${scores.clouds}/15, Weather: ${scores.weather}/15, Temperature: ${scores.temperature}/15
 
@@ -233,6 +249,7 @@ Return ONLY a valid JSON object with exactly these fields, no extra text:
       locationName,
       species,
       conditions,
+      sensorData: sensorBundle.hasRealData ? sensorBundle.readings : null,
     })
   } catch (error) {
     console.error('Report error:', error)
