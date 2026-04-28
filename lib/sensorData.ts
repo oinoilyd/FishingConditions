@@ -1,5 +1,5 @@
 export interface SensorReading {
-  source: 'NOAA NDBC' | 'USGS' | 'NOAA CO-OPS' | 'NOAA NWPS'
+  source: 'NOAA NDBC' | 'USGS' | 'NOAA CO-OPS' | 'NOAA NWPS' | 'NOAA GLERL' | 'NWS Alerts'
   stationName: string
   stationId: string
   distanceMiles: number
@@ -17,12 +17,14 @@ export interface SensorReading {
   floodStage?: string
   moderateFloodStage?: string
   majorFloodStage?: string
-  riverStatus?: string       // Normal / Near Action / Action / Minor Flood / Moderate Flood / Major Flood / Record
-  forecastStage?: string     // predicted stage (next 6-12h)
-  forecastTrend?: string     // Rising / Falling / Steady
+  riverStatus?: string
+  forecastStage?: string
+  forecastTrend?: string
   // Wind (buoys)
   windSpeed?: string
   windDirection?: string
+  // NWS active weather alerts
+  alerts?: string[]
 }
 
 export interface SensorBundle {
@@ -55,7 +57,9 @@ function nwpsStatusLabel(category: string): string {
   return map[category] || category
 }
 
-// NOAA NDBC buoys — wave height, water temp, wind from physical buoys
+// ─── NOAA NDBC ────────────────────────────────────────────────────────────────
+// Physical buoys: wave height, water temp, wind. Radius bumped to 300mi so
+// Great Lakes buoys (which can be well off-shore) are not dropped.
 async function fetchNDBC(lat: number, lng: number): Promise<SensorReading | null> {
   try {
     const stationsRes = await fetch(
@@ -71,7 +75,7 @@ async function fetchNDBC(lat: number, lng: number): Promise<SensorReading | null
     while ((match = stationRe.exec(xml)) !== null) {
       const [, id, slat, slng, name] = match
       const dist = haversine(lat, lng, parseFloat(slat), parseFloat(slng))
-      if (dist < 200 && (!best || dist < best.dist)) {
+      if (dist < 300 && (!best || dist < best.dist)) {
         best = { id, name, dist }
       }
     }
@@ -96,7 +100,8 @@ async function fetchNDBC(lat: number, lng: number): Promise<SensorReading | null
     const windSpeed = get('WSPD')
     const windDir = get('WDIR')
 
-    if (!waterTemp && !waveHeight) return null
+    // Accept reading if any useful field is present (not just temp+waves)
+    if (!waterTemp && !waveHeight && !windSpeed) return null
 
     return {
       source: 'NOAA NDBC',
@@ -114,10 +119,51 @@ async function fetchNDBC(lat: number, lng: number): Promise<SensorReading | null
   }
 }
 
-// USGS — river flow rate, gauge height, water temp
+// ─── NOAA GLERL ───────────────────────────────────────────────────────────────
+// Satellite-derived Great Lakes surface water temperature via GLERL CoastWatch
+// ERDDAP (GLSEA4 dataset). Most reliable water-temp source for the Great Lakes —
+// covers the whole lake even when buoys are offline.
+async function fetchGLERL(lat: number, lng: number): Promise<SensorReading | null> {
+  try {
+    const url =
+      `https://coastwatch.glerl.noaa.gov/erddap/griddap/glsea4.json` +
+      `?surface_temperature[(last)][${lat.toFixed(4)}:1:${lat.toFixed(4)}][${lng.toFixed(4)}:1:${lng.toFixed(4)}]`
+
+    const res = await fetch(url, { next: { revalidate: 43200 } }) // 12h cache — daily satellite product
+    if (!res.ok) return null
+    const data = await res.json()
+
+    // ERDDAP table format: { table: { columnNames: [...], rows: [[time, lat, lng, temp]] } }
+    const rows = data?.table?.rows
+    if (!rows?.length) return null
+
+    const cols: string[] = data.table.columnNames
+    const tempIdx = cols.findIndex((c: string) => c.toLowerCase().includes('surface_temperature') || c.toLowerCase().includes('temperature'))
+    if (tempIdx < 0) return null
+
+    const tempC = rows[0][tempIdx]
+    if (tempC == null || tempC === 'NaN') return null
+
+    const tempF = Math.round(parseFloat(tempC) * 9 / 5 + 32)
+
+    return {
+      source: 'NOAA GLERL',
+      stationName: 'Great Lakes Surface Analysis (Satellite)',
+      stationId: 'GLSEA4',
+      distanceMiles: 0,
+      waterTemp: `${tempF}°F`,
+    }
+  } catch {
+    return null
+  }
+}
+
+// ─── USGS ─────────────────────────────────────────────────────────────────────
+// River flow, gauge height, water temp. Bounding box expanded to 1.5° for
+// River/Stream types so stations on winding rivers aren't missed.
 async function fetchUSGS(lat: number, lng: number, siteType: 'ST' | 'LK' = 'ST'): Promise<SensorReading | null> {
   try {
-    const pad = 0.75
+    const pad = siteType === 'ST' ? 1.5 : 0.75
     const bbox = `${(lng - pad).toFixed(3)},${(lat - pad).toFixed(3)},${(lng + pad).toFixed(3)},${(lat + pad).toFixed(3)}`
     const res = await fetch(
       `https://waterservices.usgs.gov/nwis/iv/?format=json&bBox=${bbox}&parameterCd=00010,00060,00065&period=PT2H&siteType=${siteType}&siteStatus=active`,
@@ -176,46 +222,65 @@ async function fetchUSGS(lat: number, lng: number, siteType: 'ST' | 'LK' = 'ST')
   }
 }
 
-// NOAA CO-OPS — Great Lakes + coastal water temp and levels
+// ─── NOAA CO-OPS ──────────────────────────────────────────────────────────────
+// Great Lakes + coastal water temp and levels. Fetches BOTH waterlevels AND
+// watertemperature station types so Great Lakes stations that only report temp
+// aren't dropped from the list.
 async function fetchCOOPS(lat: number, lng: number): Promise<SensorReading | null> {
   try {
-    const stationsRes = await fetch(
-      'https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=waterlevels&units=english',
-      { next: { revalidate: 3600 } }
-    )
-    const stationsData = await stationsRes.json()
-    const stations = stationsData?.stations || []
+    // Fetch both station types in parallel — Great Lakes stations often only
+    // appear under 'watertemperature', not 'waterlevels'
+    const [levelsRes, tempRes] = await Promise.allSettled([
+      fetch('https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=waterlevels&units=english',
+        { next: { revalidate: 3600 } }),
+      fetch('https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=watertemperature&units=english',
+        { next: { revalidate: 3600 } }),
+    ])
+
+    const stationMap = new Map<string, { id: string; name: string; lat: number; lng: number }>()
+
+    for (const result of [levelsRes, tempRes]) {
+      if (result.status !== 'fulfilled') continue
+      const d = await result.value.json()
+      for (const s of d?.stations || []) {
+        if (!stationMap.has(s.id)) {
+          stationMap.set(s.id, { id: s.id, name: s.name, lat: parseFloat(s.lat), lng: parseFloat(s.lng) })
+        }
+      }
+    }
 
     let best: { id: string; name: string; dist: number } | null = null
-    for (const s of stations) {
-      const dist = haversine(lat, lng, parseFloat(s.lat), parseFloat(s.lng))
-      if (dist < 150 && (!best || dist < best.dist)) {
+    for (const s of stationMap.values()) {
+      const dist = haversine(lat, lng, s.lat, s.lng)
+      if (dist < 200 && (!best || dist < best.dist)) {
         best = { id: s.id, name: s.name, dist }
       }
     }
     if (!best) return null
 
     const now = new Date()
-    const fmt = (d: Date) => `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+    const fmt = (d: Date) =>
+      `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
     const end = fmt(now)
     const start = fmt(new Date(now.getTime() - 3600000))
+    const encode = (s: string) => s.replace(' ', '%20')
 
-    const [tempRes, levelRes] = await Promise.allSettled([
-      fetch(`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=water_temperature&station=${best.id}&begin_date=${start.replace(' ', '%20')}&end_date=${end.replace(' ', '%20')}&time_zone=GMT&units=english&format=json`),
-      fetch(`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=water_level&station=${best.id}&begin_date=${start.replace(' ', '%20')}&end_date=${end.replace(' ', '%20')}&time_zone=GMT&units=english&datum=MLLW&format=json`),
+    const [waterTempRes, waterLevelRes] = await Promise.allSettled([
+      fetch(`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=water_temperature&station=${best.id}&begin_date=${encode(start)}&end_date=${encode(end)}&time_zone=GMT&units=english&format=json`),
+      fetch(`https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=water_level&station=${best.id}&begin_date=${encode(start)}&end_date=${encode(end)}&time_zone=GMT&units=english&datum=MLLW&format=json`),
     ])
 
     let waterTemp: string | undefined
     let waterLevel: string | undefined
 
-    if (tempRes.status === 'fulfilled') {
-      const d = await tempRes.value.json()
+    if (waterTempRes.status === 'fulfilled') {
+      const d = await waterTempRes.value.json()
       const latest = d?.data?.[d.data.length - 1]?.v
       if (latest && latest !== '-') waterTemp = `${parseFloat(latest).toFixed(1)}°F`
     }
 
-    if (levelRes.status === 'fulfilled') {
-      const d = await levelRes.value.json()
+    if (waterLevelRes.status === 'fulfilled') {
+      const d = await waterLevelRes.value.json()
       const latest = d?.data?.[d.data.length - 1]?.v
       if (latest && latest !== '-') waterLevel = `${parseFloat(latest).toFixed(2)} ft`
     }
@@ -235,13 +300,13 @@ async function fetchCOOPS(lat: number, lng: number): Promise<SensorReading | nul
   }
 }
 
-// NOAA NWPS — river stage, flood thresholds, status, and forecast
+// ─── NOAA NWPS ────────────────────────────────────────────────────────────────
+// River stage, flood thresholds, status, and 12h forecast via ArcGIS MapServer
 async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null> {
   try {
     const pad = 0.75
     const bbox = `${(lng - pad).toFixed(3)},${(lat - pad).toFixed(3)},${(lng + pad).toFixed(3)},${(lat + pad).toFixed(3)}`
 
-    // Find nearest NWS forecast gauge via ArcGIS MapServer (supports bbox)
     const arcRes = await fetch(
       `https://mapservices.weather.noaa.gov/eventdriven/rest/services/water/riv_gauges/MapServer/0/query?geometry=${bbox}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&outFields=*&f=json`,
       { next: { revalidate: 1800 } }
@@ -250,7 +315,6 @@ async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null
     const features = arcData?.features || []
     if (!features.length) return null
 
-    // Find nearest feature
     let best: { lid: string; name: string; dist: number } | null = null
     for (const f of features) {
       const fLat = f.geometry?.y ?? f.attributes?.latitude ?? f.attributes?.lat
@@ -265,7 +329,6 @@ async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null
     }
     if (!best) return null
 
-    // Get full gauge details from NWPS API
     const nwpsRes = await fetch(
       `https://api.water.noaa.gov/nwps/v1/gauges/${best.lid}`,
       { next: { revalidate: 1800 } }
@@ -284,7 +347,6 @@ async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null
     const majorFloodStage = categories?.major?.stage != null ? `${categories.major.stage} ft` : undefined
     const riverStatus = nwpsStatusLabel(statusCat)
 
-    // Get next 12h forecast peak
     let forecastStage: string | undefined
     let forecastTrend: string | undefined
     if (forecast.length > 0 && obs?.primary != null) {
@@ -323,6 +385,58 @@ async function fetchNWPS(lat: number, lng: number): Promise<SensorReading | null
   }
 }
 
+// ─── NWS Alerts ───────────────────────────────────────────────────────────────
+// Active weather alerts from api.weather.gov — no API key required.
+// Filters for alerts relevant to fishing: flood warnings, wind advisories,
+// small craft advisories, dense fog, etc.
+const FISHING_ALERT_EVENTS = new Set([
+  'Flood Warning', 'Flash Flood Warning', 'Flash Flood Watch',
+  'Flood Advisory', 'Flood Watch',
+  'Small Craft Advisory', 'Small Craft Advisory for Hazardous Seas',
+  'High Wind Warning', 'High Wind Watch', 'Wind Advisory',
+  'Lake Wind Advisory', 'Lakeshore Flood Advisory', 'Lakeshore Flood Warning',
+  'Coastal Flood Advisory', 'Coastal Flood Warning',
+  'Dense Fog Advisory', 'Dense Smoke Advisory',
+  'Rip Current Statement', 'Beach Hazards Statement',
+  'Winter Storm Warning', 'Ice Storm Warning', 'Blizzard Warning',
+  'Severe Thunderstorm Warning', 'Tornado Warning',
+  'Special Marine Warning',
+])
+
+async function fetchNWSAlerts(lat: number, lng: number): Promise<SensorReading | null> {
+  try {
+    const res = await fetch(
+      `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lng.toFixed(4)}`,
+      {
+        headers: { 'User-Agent': 'CastIQ/1.0 (fishing conditions app)' },
+        next: { revalidate: 900 }, // 15 min cache
+      }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    const features = data?.features || []
+
+    const relevantAlerts = features
+      .filter((f: { properties: { event: string } }) => FISHING_ALERT_EVENTS.has(f.properties?.event))
+      .map((f: { properties: { event: string } }) => f.properties.event)
+      // Deduplicate
+      .filter((v: string, i: number, arr: string[]) => arr.indexOf(v) === i)
+
+    if (!relevantAlerts.length) return null
+
+    return {
+      source: 'NWS Alerts',
+      stationName: 'National Weather Service',
+      stationId: 'NWS',
+      distanceMiles: 0,
+      alerts: relevantAlerts,
+    }
+  } catch {
+    return null
+  }
+}
+
+// ─── Router ───────────────────────────────────────────────────────────────────
 export async function fetchAllSensorData(lat: number, lng: number, waterBodyType = 'Unknown water body'): Promise<SensorBundle> {
   const type = waterBodyType.toLowerCase()
   const isGreatLake = type.includes('great lake')
@@ -331,16 +445,21 @@ export async function fetchAllSensorData(lat: number, lng: number, waterBodyType
   const isSaltwater = type.includes('saltwater') || type.includes('coastal')
   const isPond = type.includes('pond')
 
-  // Route the right sources for each water body type:
-  // Great Lakes  → NDBC (buoys on the lake) + CO-OPS. No river gauges, no NWPS.
-  // Lake/Reservoir → USGS lake gauges + CO-OPS. No river gauges, no NWPS.
-  // River/Stream → USGS river gauges + NWPS forecasts. Skip NDBC (ocean buoys).
-  // Saltwater    → NDBC + CO-OPS. Skip USGS/NWPS.
-  // Pond/Unknown → USGS river gauges as best-effort. Skip NDBC/NWPS unless close.
+  // Source routing by water body type:
+  // Great Lakes  → NDBC buoys + CO-OPS stations + GLERL satellite temp
+  // Lake/Reservoir → USGS lake gauges + CO-OPS
+  // River/Stream → USGS river gauges (wider box) + NWPS forecasts
+  // Saltwater    → NDBC + CO-OPS
+  // Pond/Unknown → USGS river gauges (best-effort)
+  // All types    → NWS active weather alerts
 
   const promises: Promise<SensorReading | null>[] = []
 
-  if (isGreatLake || isSaltwater) {
+  if (isGreatLake) {
+    promises.push(fetchNDBC(lat, lng))
+    promises.push(fetchCOOPS(lat, lng))
+    promises.push(fetchGLERL(lat, lng))
+  } else if (isSaltwater) {
     promises.push(fetchNDBC(lat, lng))
     promises.push(fetchCOOPS(lat, lng))
   } else if (isLake) {
@@ -352,10 +471,12 @@ export async function fetchAllSensorData(lat: number, lng: number, waterBodyType
   } else if (isPond) {
     promises.push(fetchUSGS(lat, lng, 'ST'))
   } else {
-    // Unknown — try USGS river gauges and CO-OPS, skip NDBC and NWPS
     promises.push(fetchUSGS(lat, lng, 'ST'))
     promises.push(fetchCOOPS(lat, lng))
   }
+
+  // NWS alerts for every water body type
+  promises.push(fetchNWSAlerts(lat, lng))
 
   const results = await Promise.allSettled(promises)
   const readings = results

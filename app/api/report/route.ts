@@ -284,10 +284,14 @@ export async function POST(req: NextRequest) {
       ? `Water Temperature (${sensorWaterTemp ? 'sensor' : 'marine model'}): ${bestWaterTemp}`
       : 'Water Temperature: Not available'
 
-    const sensorLines = sensorBundle.readings.length > 0
+    const dataSources = sensorBundle.readings.filter(r => r.source !== 'NWS Alerts')
+    const nwsAlertReading = sensorBundle.readings.find(r => r.source === 'NWS Alerts')
+
+    const sensorLines = dataSources.length > 0 || nwsAlertReading
       ? '\nREAL SENSOR DATA (from physical monitoring stations — prioritize this over modeled data):\n' +
-        sensorBundle.readings.map(r => {
-          const parts = [`[${r.source} — ${r.stationName}, ${r.distanceMiles}mi away]`]
+        dataSources.map(r => {
+          const dist = r.distanceMiles === 0 ? 'satellite' : `${r.distanceMiles}mi away`
+          const parts = [`[${r.source} — ${r.stationName}, ${dist}]`]
           if (r.waterTemp) parts.push(`  Water Temp: ${r.waterTemp}`)
           if (r.waveHeight) parts.push(`  Wave Height: ${r.waveHeight}`)
           if (r.wavePeriod) parts.push(`  Wave Period: ${r.wavePeriod}`)
@@ -303,7 +307,10 @@ export async function POST(req: NextRequest) {
           if (r.majorFloodStage) parts.push(`  Major Flood Stage: ${r.majorFloodStage}`)
           if (r.forecastStage) parts.push(`  Forecast (next 12h): ${r.forecastStage} — ${r.forecastTrend}`)
           return parts.join('\n')
-        }).join('\n')
+        }).join('\n') +
+        (nwsAlertReading?.alerts?.length
+          ? `\n[NWS Active Alerts] ${nwsAlertReading.alerts.join(' | ')} — factor these into riskFlags`
+          : '')
       : ''
 
     const speciesContext = getSpeciesContext(species)

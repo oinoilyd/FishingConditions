@@ -53,6 +53,7 @@ interface SensorReading {
   forecastTrend?: string
   windSpeed?: string
   windDirection?: string
+  alerts?: string[]
 }
 
 interface Report {
@@ -232,34 +233,62 @@ export default function ReportPanel({ report, loading, onClose, onSpeciesChange 
                 <p className="text-emerald-400 text-xs font-semibold uppercase tracking-wide mb-2">📡 Live Sensor Data</p>
                 {report.sensorData.map((s, i) => (
                   <div key={i} className={i > 0 ? 'mt-3 pt-3 border-t border-white/10' : ''}>
-                    <p className="text-emerald-300/80 text-xs font-medium">{s.source} — {s.stationName} <span className="text-white/30">({s.distanceMiles}mi)</span></p>
-                    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
-                      {s.waterTemp && <span className="text-white/60 text-xs">🌡 Water {s.waterTemp}</span>}
-                      {s.waveHeight && <span className="text-white/60 text-xs">🌊 {s.waveHeight} waves</span>}
-                      {s.wavePeriod && <span className="text-white/60 text-xs">⏱ {s.wavePeriod} period</span>}
-                      {s.waterLevel && <span className="text-white/60 text-xs">📏 Level {s.waterLevel}</span>}
-                      {s.flowRate && <span className="text-white/60 text-xs">💧 Flow {s.flowRate}</span>}
-                      {s.gaugeHeight && <span className="text-white/60 text-xs">📏 Stage {s.gaugeHeight}</span>}
-                      {s.windSpeed && <span className="text-white/60 text-xs">💨 {s.windSpeed} {s.windDirection ? `from ${s.windDirection}` : ''}</span>}
-                      {s.currentStage && (
-                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                          s.riverStatus?.includes('Flood') ? 'bg-red-500/20 text-red-300' :
-                          s.riverStatus?.includes('Action') ? 'bg-yellow-500/20 text-yellow-300' :
-                          'bg-white/10 text-white/60'
-                        }`}>
-                          Stage {s.currentStage} · {s.riverStatus}
-                        </span>
-                      )}
-                      {s.actionStage && <span className="text-white/40 text-xs">Action: {s.actionStage}</span>}
-                      {s.floodStage && <span className="text-white/40 text-xs">Flood: {s.floodStage}</span>}
-                      {s.moderateFloodStage && <span className="text-white/40 text-xs">Mod. Flood: {s.moderateFloodStage}</span>}
-                      {s.majorFloodStage && <span className="text-white/40 text-xs">Major Flood: {s.majorFloodStage}</span>}
-                      {s.forecastStage && (
-                        <span className={`text-xs ${s.forecastTrend === 'Rising' ? 'text-yellow-400/70' : s.forecastTrend === 'Falling' ? 'text-blue-400/70' : 'text-white/40'}`}>
-                          {s.forecastTrend === 'Rising' ? '↑' : s.forecastTrend === 'Falling' ? '↓' : '→'} Forecast {s.forecastStage}
-                        </span>
-                      )}
-                    </div>
+
+                    {/* Source header */}
+                    <p className="text-emerald-300/80 text-xs font-medium">
+                      {s.source === 'NWS Alerts' ? '⚠️' : s.source === 'NOAA GLERL' ? '🛰️' : '📍'}{' '}
+                      {s.source} — {s.stationName}{' '}
+                      <span className="text-white/30">
+                        {s.distanceMiles === 0 ? '(satellite)' : `(${s.distanceMiles}mi)`}
+                      </span>
+                    </p>
+
+                    {/* NWS Alerts: render as warning chips */}
+                    {s.source === 'NWS Alerts' && s.alerts && s.alerts.length > 0 && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {s.alerts.map((alert, ai) => (
+                          <span key={ai} className="text-xs bg-yellow-500/20 text-yellow-300 border border-yellow-500/30 px-2 py-0.5 rounded-full">
+                            {alert}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* All other sources: numerical readings */}
+                    {s.source !== 'NWS Alerts' && (
+                      <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1">
+                        {s.waterTemp && (
+                          <span className="text-white/60 text-xs">
+                            🌡 Water {s.waterTemp}
+                            {s.source === 'NOAA GLERL' && <span className="ml-1 text-sky-400/70">satellite</span>}
+                          </span>
+                        )}
+                        {s.waveHeight && <span className="text-white/60 text-xs">🌊 {s.waveHeight} waves</span>}
+                        {s.wavePeriod && <span className="text-white/60 text-xs">⏱ {s.wavePeriod} period</span>}
+                        {s.waterLevel && <span className="text-white/60 text-xs">📏 Level {s.waterLevel}</span>}
+                        {s.flowRate && <span className="text-white/60 text-xs">💧 Flow {s.flowRate}</span>}
+                        {s.gaugeHeight && <span className="text-white/60 text-xs">📏 Stage {s.gaugeHeight}</span>}
+                        {s.windSpeed && <span className="text-white/60 text-xs">💨 {s.windSpeed} {s.windDirection ? `from ${s.windDirection}` : ''}</span>}
+                        {s.currentStage && (
+                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                            s.riverStatus?.includes('Flood') ? 'bg-red-500/20 text-red-300' :
+                            s.riverStatus?.includes('Action') ? 'bg-yellow-500/20 text-yellow-300' :
+                            'bg-white/10 text-white/60'
+                          }`}>
+                            Stage {s.currentStage} · {s.riverStatus}
+                          </span>
+                        )}
+                        {s.actionStage && <span className="text-white/40 text-xs">Action: {s.actionStage}</span>}
+                        {s.floodStage && <span className="text-white/40 text-xs">Flood: {s.floodStage}</span>}
+                        {s.moderateFloodStage && <span className="text-white/40 text-xs">Mod. Flood: {s.moderateFloodStage}</span>}
+                        {s.majorFloodStage && <span className="text-white/40 text-xs">Major Flood: {s.majorFloodStage}</span>}
+                        {s.forecastStage && (
+                          <span className={`text-xs ${s.forecastTrend === 'Rising' ? 'text-yellow-400/70' : s.forecastTrend === 'Falling' ? 'text-blue-400/70' : 'text-white/40'}`}>
+                            {s.forecastTrend === 'Rising' ? '↑' : s.forecastTrend === 'Falling' ? '↓' : '→'} Forecast {s.forecastStage}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
