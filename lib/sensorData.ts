@@ -101,22 +101,9 @@ async function fetchNDBCBuoys(lat: number, lng: number, max = 1): Promise<Sensor
 
     candidates.sort((a, b) => a.dist - b.dist)
 
-    // For station names, fetch the XML (cached 1h so not a bottleneck after first load)
-    const nameMap = new Map<string, string>()
-    try {
-      const xmlRes = await fetch(
-        'https://www.ndbc.noaa.gov/data/stations/active_stations.xml',
-        { next: { revalidate: 3600 } }
-      )
-      const xml = await xmlRes.text()
-      const re = /id="([^"]+)"[^>]*name="([^"]+)"/g
-      let m: RegExpExecArray | null
-      while ((m = re.exec(xml)) !== null) nameMap.set(m[1].toUpperCase(), m[2])
-    } catch { /* names fall back to ID */ }
-
     return candidates.slice(0, max).map(c => ({
       source: 'NOAA NDBC' as const,
-      stationName: nameMap.get(c.id.toUpperCase()) || `Buoy ${c.id}`,
+      stationName: `Buoy ${c.id}`,
       stationId: c.id,
       distanceMiles: Math.round(c.dist),
       url: `https://www.ndbc.noaa.gov/station_page.php?station=${c.id.toLowerCase()}`,

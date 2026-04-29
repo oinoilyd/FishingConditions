@@ -241,12 +241,16 @@ export async function POST(req: NextRequest) {
 
     const waterBody = classifyWaterBody(locationName, lat, lng)
 
+    const sensorTimeout = new Promise<{ readings: never[]; hasRealData: false }>(resolve =>
+      setTimeout(() => resolve({ readings: [], hasRealData: false }), 12000)
+    )
+
     const [weatherRes, waterTemp, sensorBundle] = await Promise.all([
       fetch(
         `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,precipitation,cloud_cover,surface_pressure,weather_code,relative_humidity_2m&hourly=temperature_2m,wind_speed_10m,cloud_cover,surface_pressure,weather_code&past_hours=3&forecast_hours=24&wind_speed_unit=mph&temperature_unit=fahrenheit&timezone=auto`
       ),
       fetchWaterTemp(lat, lng),
-      fetchAllSensorData(lat, lng, waterBody.type),
+      Promise.race([fetchAllSensorData(lat, lng, waterBody.type), sensorTimeout]),
     ])
 
     const weatherData = await weatherRes.json()
