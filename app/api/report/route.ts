@@ -3,6 +3,8 @@ import Anthropic from '@anthropic-ai/sdk'
 import { getSpeciesContext, SPECIES_PROFILES } from '@/lib/speciesKnowledge'
 import { fetchAllSensorData } from '@/lib/sensorData'
 
+export const maxDuration = 60
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
 
 const SPECIES_LABELS: Record<string, string> = {
